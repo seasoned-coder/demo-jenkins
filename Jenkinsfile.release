@@ -228,7 +228,7 @@ else
     
     # 3. Create a new local branch pointing to the new commit (HEAD)
     echo "Creating new local branch: ${NEW_RELEASE_BRANCH} pointing to HEAD"
-    git branch "${NEW_RELEASE_BRANCH}" HEAD
+    git branch -f "${NEW_RELEASE_BRANCH}" HEAD
 
     # 4. Define the timestamped tag
     TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -258,7 +258,7 @@ EOF
     export GIT_ASKPASS="$GIT_ASKPASS_SCRIPT"
 
     echo "PUSH_CHANGES=${PUSH_CHANGES}. Pushing new branch ${NEW_RELEASE_BRANCH} and tag ${RELEASE_TAG} to origin..."
-    git push origin "${NEW_RELEASE_BRANCH}"
+    git push --force-with-lease origin "${NEW_RELEASE_BRANCH}"
     git push origin "${RELEASE_TAG}"
 
     unset GIT_ASKPASS
