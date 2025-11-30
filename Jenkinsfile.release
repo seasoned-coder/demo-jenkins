@@ -3,10 +3,12 @@ pipeline {
     agent any
     environment {
         MAVEN_TOOL = 'Maven3.9.11'
-        // New: Specify the name of the Java 25 tool configured in Jenkins
-        JAVA_TOOL = 'JDK25'
         // This credential ID is used for both the checkout AND the git push
         GIT_CRED = 'GIT_RW'
+    }
+
+    tools {
+        jdk 'JDK25'
     }
 
     // Define parameters so this single pipeline can service multiple repositories
@@ -82,16 +84,9 @@ pipeline {
             steps {
                 script {
                     echo 'Building and running tests for all modules using Java 25...'
-                    
-                    // NEW FIX: Explicitly resolve the tool path and set JAVA_HOME using withEnv.
-                    // This is done BEFORE withMaven, and withMaven is called without the 'jdk' parameter
-                    // so it inherits the explicit JAVA_HOME setting.
-                    def javaHomePath = tool name: env.JAVA_TOOL
-                    
-                    withEnv(["JAVA_HOME=${javaHomePath}"]) {
-                        withMaven(maven: env.MAVEN_TOOL) {
-                            sh 'mvn -B -ntp test'
-                        }
+                                        
+                    withMaven() {
+                        sh 'mvn -B -ntp test'
                     }
                 }
             }
@@ -104,13 +99,8 @@ pipeline {
                 script {
                     echo 'Preparing to compute next version in Update stage...'
                     
-                    // Apply the same robust JDK path setting here
-                    def javaHomePath = tool name: env.JAVA_TOOL
-
-                    withEnv(["JAVA_HOME=${javaHomePath}"]) {
-                        withMaven(maven: env.MAVEN_TOOL) { // Removed jdk parameter
-                             sh "mvn -B -ntp -v"
-                        }
+                    withMaven() { 
+                            sh "mvn -B -ntp -v"
                     }
                 }
             }
@@ -128,13 +118,9 @@ pipeline {
 
                     echo "Updating POM based on increment type ${env.INC_TYPE}..."
                     
-                    // Apply the same robust JDK path setting here
-                    def javaHomePath = tool name: env.JAVA_TOOL
-
-                    withEnv(["JAVA_HOME=${javaHomePath}"]) {
-                        withMaven(maven: env.MAVEN_TOOL, publisherStrategy: 'EXPLICIT') { // Removed jdk parameter
-                            // SIMPLE BASH SCRIPT: Get numbers, do math, set version. No Groovy interpolation.
-                            sh '''#!/bin/bash
+                    withMaven(publisherStrategy: 'EXPLICIT') { // Removed jdk parameter
+                        // SIMPLE BASH SCRIPT: Get numbers, do math, set version. No Groovy interpolation.
+                        sh '''#!/bin/bash
 set -euo pipefail
 
 if [ ! -f pom.xml ]; then
