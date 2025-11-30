@@ -3,6 +3,8 @@ pipeline {
     agent any
     environment {
         MAVEN_TOOL = 'Maven3.9.11'
+        // New: Specify the name of the Java 25 tool configured in Jenkins
+        JAVA_TOOL = 'JDK25'
         // This credential ID is used for both the checkout AND the git push
         GIT_CRED = 'GIT_RW'
     }
@@ -79,9 +81,13 @@ pipeline {
             agent any
             steps {
                 script {
-                    echo 'Building and running tests for all modules'
-                    withMaven(maven: env.MAVEN_TOOL) {
-                        sh 'mvn -B -ntp test'
+                    echo 'Building and running tests for all modules using Java 25...'
+                    
+                    // Use the `tool` step to put the Java 25 JDK on the PATH for the Maven build
+                    tool(name: env.JAVA_TOOL) {
+                        withMaven(maven: env.MAVEN_TOOL) {
+                            sh 'mvn -B -ntp test'
+                        }
                     }
                 }
             }
