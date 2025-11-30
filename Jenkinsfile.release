@@ -83,7 +83,7 @@ pipeline {
                 script {
                     echo 'Building and running tests for all modules using Java 25...'
                     
-                    // Use the `tool` step to put the Java 25 JDK on the PATH for the Maven build
+                    // FIX: Changed positional argument to named argument: `tool(env.JAVA_TOOL)` -> `tool(name: env.JAVA_TOOL)`
                     tool(name: env.JAVA_TOOL) {
                         withMaven(maven: env.MAVEN_TOOL) {
                             sh 'mvn -B -ntp test'
