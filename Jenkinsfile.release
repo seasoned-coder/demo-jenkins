@@ -83,11 +83,12 @@ pipeline {
                 script {
                     echo 'Building and running tests for all modules using Java 25...'
                     
-                    // FIX: Changed positional argument to named argument: `tool(env.JAVA_TOOL)` -> `tool(name: env.JAVA_TOOL)`
-                    tool(name: env.JAVA_TOOL) {
-                        withMaven(maven: env.MAVEN_TOOL) {
-                            sh 'mvn -B -ntp test'
-                        }
+                    // FINAL FIX: Separate the tool step from the withMaven block to avoid the Groovy parser error.
+                    // This puts the JDK 25 executables onto the PATH for subsequent steps in this stage.
+                    tool name: env.JAVA_TOOL
+                    
+                    withMaven(maven: env.MAVEN_TOOL) {
+                        sh 'mvn -B -ntp test'
                     }
                 }
             }
