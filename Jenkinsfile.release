@@ -180,8 +180,7 @@ mvn -B -ntp versions:commit -f "${WORKSPACE}/pom.xml"
 # Export for next step
 echo "${NEW_VER}" > new_version.txt
                             '''
-                        }
-                    } // Close withEnv here
+                    }
 
                     withCredentials([usernamePassword(credentialsId: "${env.GIT_CRED}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
                         echo "PUSH_CHANGES=${env.PUSH_CHANGES}"
