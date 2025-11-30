@@ -73,7 +73,7 @@ pipeline {
                     ]]
                 ])
 
-                script { sh 'pwd; ls -la' }
+                script { sh 'pwd; ls -la; java --version' }
             }
         }
 
