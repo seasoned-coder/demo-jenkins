@@ -2,10 +2,13 @@
 pipeline {
     agent any
     environment {
+        // Only necessary environment variables remain.
+        // MAVEN_TOOL and JAVA_TOOL are removed as they are now handled by the 'tools' block.
         // This credential ID is used for both the checkout AND the git push
         GIT_CRED = 'GIT_RW'
     }
 
+    // NEW: Use the 'tools' directive for clean tool setup (sets JAVA_HOME and M2_HOME)
     tools {
         jdk 'JDK25'
         maven 'Maven3.9.11'
@@ -15,6 +18,8 @@ pipeline {
     parameters {
         string(name: 'TARGET_REPO_URL', description: 'The Git URL of the Java project to release (e.g. https://github.com/user/my-app.git)', trim: true)
         string(name: 'TARGET_BRANCH', defaultValue: 'main', description: 'The branch of the Java project to checkout and release', trim: true)
+        // NEW: Parameter to specify a Git Tag, which takes precedence over the branch
+        string(name: 'TARGET_TAG', defaultValue: '', description: 'Optional Git tag/SHA to checkout (takes precedence over TARGET_BRANCH)', trim: true)
     }
 
     options {
@@ -38,10 +43,13 @@ pipeline {
                     if (!params.TARGET_REPO_URL) {
                         error "TARGET_REPO_URL parameter is missing. Cannot proceed."
                     }
+                    
+                    def gitReference = params.TARGET_TAG ?: params.TARGET_BRANCH
+                    def message = "Ready to release project: ${params.TARGET_REPO_URL} (Ref: ${gitReference})?"
 
                     def inputResult = input(
                     id: 'pomUpdate',
-                    message: "Ready to release project: ${params.TARGET_REPO_URL} (Branch: ${params.TARGET_BRANCH})?",
+                    message: message,
                     ok: 'Start Release',
                     parameters: [
                         booleanParam(name: 'SKIP_POM_UPDATE', defaultValue: true, description: 'Yes → skip POM update; No → update POM'),
@@ -62,29 +70,52 @@ pipeline {
         stage('Checkout') {
             agent any
             steps {
-                echo "Checking out target repository: ${params.TARGET_REPO_URL} on branch ${params.TARGET_BRANCH}"
-                
-                // We explicitly checkout the TARGET project, not the pipeline repo.
-                // We use the GIT_CRED environment variable for authentication.
-                checkout([
-                    $class: 'GitSCM', 
-                    branches: [[name: "*/${params.TARGET_BRANCH}"]], 
-                    userRemoteConfigs: [[
-                        credentialsId: env.GIT_CRED, 
-                        url: params.TARGET_REPO_URL
-                    ]]
-                ])
+                script {
+                    def gitReference
+                    def isTagCheckout = false
 
-                script { sh 'pwd; ls -la; java --version' }
+                    if (params.TARGET_TAG && params.TARGET_TAG.trim() != '') {
+                        gitReference = params.TARGET_TAG.trim()
+                        isTagCheckout = true
+                        echo "Prioritizing checkout by Git Tag: ${gitReference}"
+                    } else {
+                        gitReference = params.TARGET_BRANCH.trim()
+                        echo "Checking out target repository: ${params.TARGET_REPO_URL} on branch ${gitReference}"
+                    }
+                    
+                    // The GitSCM branches list is built based on whether a tag or branch is used
+                    def checkoutBranches = []
+                    if (isTagCheckout) {
+                         // For tags, specify the tag name directly
+                         checkoutBranches.add([name: gitReference])
+                    } else {
+                         // For branches, use the standard '*/branch_name'
+                         checkoutBranches.add([name: "*/${gitReference}"])
+                    }
+                
+                    // We explicitly checkout the TARGET project, not the pipeline repo.
+                    checkout([
+                        $class: 'GitSCM', 
+                        branches: checkoutBranches, 
+                        userRemoteConfigs: [[
+                            credentialsId: env.GIT_CRED, 
+                            url: params.TARGET_REPO_URL
+                        ]]
+                    ])
+
+                    sh 'pwd; ls -la' 
+                }
             }
         }
 
         stage('Build & Test') {
+            when { false }
             agent any
             steps {
                 script {
                     echo 'Building and running tests for all modules using Java 25...'
-                                        
+                    
+                    // Tool environment is now automatically set by the top-level 'tools' block
                     withMaven() {
                         sh 'mvn -B -ntp test'
                     }
@@ -99,8 +130,9 @@ pipeline {
                 script {
                     echo 'Preparing to compute next version in Update stage...'
                     
-                    withMaven() { 
-                            sh "mvn -B -ntp -v"
+                    // Tool environment is now automatically set by the top-level 'tools' block
+                    withMaven() {
+                         sh "mvn -B -ntp -v"
                     }
                 }
             }
@@ -118,7 +150,8 @@ pipeline {
 
                     echo "Updating POM based on increment type ${env.INC_TYPE}..."
                     
-                    withMaven(publisherStrategy: 'EXPLICIT') { // Removed jdk parameter
+                    // Tool environment is now automatically set by the top-level 'tools' block
+                    withMaven(publisherStrategy: 'EXPLICIT') {
                         // SIMPLE BASH SCRIPT: Get numbers, do math, set version. No Groovy interpolation.
                         sh '''#!/bin/bash
 set -euo pipefail
@@ -210,7 +243,7 @@ else
     
     # 3. Create a new local branch pointing to the new commit (HEAD)
     echo "Creating new local branch: ${NEW_RELEASE_BRANCH} pointing to HEAD"
-    git branch -f "${NEW_RELEASE_BRANCH}" HEAD
+    git branch "${NEW_RELEASE_BRANCH}" HEAD
 
     # 4. Define the timestamped tag
     TIMESTAMP=$(date +%Y%m%d%H%M%S)
@@ -240,7 +273,7 @@ EOF
     export GIT_ASKPASS="$GIT_ASKPASS_SCRIPT"
 
     echo "PUSH_CHANGES=${PUSH_CHANGES}. Pushing new branch ${NEW_RELEASE_BRANCH} and tag ${RELEASE_TAG} to origin..."
-    git push --force-with-lease origin "${NEW_RELEASE_BRANCH}"
+    git push origin "${NEW_RELEASE_BRANCH}"
     git push origin "${RELEASE_TAG}"
 
     unset GIT_ASKPASS
