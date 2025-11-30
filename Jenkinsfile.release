@@ -1,0 +1,242 @@
+/* groovylint-disable DuplicateMapLiteral, LineLength */
+pipeline {
+    agent any
+    environment {
+        MAVEN_TOOL = 'Maven3.9.11'
+        GIT_CRED = 'GIT_RW'
+    }
+
+    options {
+        // Stops Jenkins from automatically cloning/checking out the repository at the start of every stage
+        skipDefaultCheckout()
+        ansiColor('xterm')
+        timeout(time: 1, unit: 'HOURS')
+        disableConcurrentBuilds()
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '10'))
+    }
+
+    stages {
+        stage('Ask if POM needs updating') {
+            agent none
+            options { timeout(time: 1, unit: 'HOURS') }
+            steps {
+                script {
+                    def inputResult = input(
+                    id: 'pomUpdate',
+                    message: 'Has the POM for this project been updated with the new release version?',
+                    ok: 'Submit',
+                    parameters: [
+                        booleanParam(name: 'SKIP_POM_UPDATE', defaultValue: true, description: 'Yes → skip POM update; No → update POM'),
+                        choice(name: 'INC_TYPE', choices: ['MAJOR', 'MINOR', 'PATCH'].join('\n'), description: 'Select the version increment type to apply when updating the POM'),
+                        booleanParam(name: 'PUSH_CHANGES', defaultValue: false, description: 'If true, commit and push POM changes back to origin')
+                    ]
+                    )
+
+                    env.SKIP_POM_UPDATE = inputResult.SKIP_POM_UPDATE.toString()
+                    // Trim and ensure the input is exactly MINOR/MAJOR/PATCH string
+                    env.INC_TYPE = inputResult.INC_TYPE?.trim()
+                    env.PUSH_CHANGES = inputResult.PUSH_CHANGES.toString()
+                    
+                    echo "User Input - SKIP_POM_UPDATE: ${env.SKIP_POM_UPDATE}, INC_TYPE: ${env.INC_TYPE}"
+                }
+            }
+        }
+
+        stage('Checkout') {
+            agent any
+            steps {
+                echo "Ensuring workspace has a checked-out repository..."
+                checkout scm
+                script { sh 'pwd; ls -la' }
+            }
+        }
+
+        stage('Build & Test') {
+            agent any
+            steps {
+                script {
+                    echo 'Building and running tests for all modules'
+                    withMaven(maven: env.MAVEN_TOOL) {
+                        sh 'mvn -B -ntp test'
+                    }
+                }
+            }
+        }
+
+        // Simplified: Just checking tools work here. Calculation moved to Update POM for atomic execution.
+        stage('Compute Next Version') {
+            agent any
+            steps {
+                script {
+                    echo 'Preparing to compute next version in Update stage...'
+                    withMaven(maven: env.MAVEN_TOOL) {
+                         sh "mvn -B -ntp -v"
+                    }
+                }
+            }
+        }
+
+        stage('Update POM') {
+            agent any
+            when { expression { env.SKIP_POM_UPDATE == 'false' } }
+            options { timeout(time: 30, unit: 'MINUTES') }
+            steps {
+                script {
+                    if (!env.INC_TYPE) {
+                            error("INC_TYPE must be provided when you answered NO to the POM update question")
+                    }
+
+                    echo "Updating POM based on increment type ${env.INC_TYPE}..."
+
+                    withMaven(maven: env.MAVEN_TOOL, publisherStrategy: 'EXPLICIT') {
+                        // SIMPLE BASH SCRIPT: Get numbers, do math, set version. No Groovy interpolation.
+                        sh '''#!/bin/bash
+set -euo pipefail
+
+if [ ! -f pom.xml ]; then
+    echo "ERROR: pom.xml not found in workspace"
+    exit 1
+fi
+
+# 1. Removed standalone parse-version because properties are not persistent across mvn invocations.
+# Instead, we run parse-version AND help:evaluate in the same command below.
+
+# 2. Helper to get a clean number (handles noise)
+# KEY CHANGE: We now run build-helper:parse-version BEFORE help:evaluate in the SAME command.
+get_ver() {
+    mvn -B -ntp build-helper:parse-version help:evaluate -Dexpression=parsedVersion.$1 -DforceStdout -q -f "${WORKSPACE}/pom.xml" 2>/dev/null | grep -E '^[0-9]+$' | tail -1
+}
+
+# 3. Extract current components
+MAJOR=$(get_ver majorVersion)
+MINOR=$(get_ver minorVersion)
+PATCH=$(get_ver incrementalVersion)
+
+# Default to 0 if empty
+MAJOR=${MAJOR:-0}
+MINOR=${MINOR:-0}
+PATCH=${PATCH:-0}
+
+echo "Current Version detected as: ${MAJOR}.${MINOR}.${PATCH}"
+echo "Increment type is: ${INC_TYPE}"
+
+# 4. Calculate New Version string using Bash math
+if [ "${INC_TYPE}" == "MAJOR" ]; then
+    NEW_MAJOR=$((MAJOR + 1))
+    NEW_VER="${NEW_MAJOR}.0.0"
+elif [ "${INC_TYPE}" == "MINOR" ]; then
+    NEW_MINOR=$((MINOR + 1))
+    NEW_VER="${MAJOR}.${NEW_MINOR}.0"
+else
+    # Default to PATCH
+    NEW_PATCH=$((PATCH + 1))
+    NEW_VER="${MAJOR}.${MINOR}.${NEW_PATCH}"
+fi
+
+echo "Calculated NEW_VER: ${NEW_VER}"
+
+# 5. Apply the version
+mvn -B -ntp versions:set -DnewVersion="${NEW_VER}" -DprocessAllModules=true -DgenerateBackupPoms=false -f "${WORKSPACE}/pom.xml"
+
+echo "Committing project version change"
+mvn -B -ntp versions:commit -f "${WORKSPACE}/pom.xml"
+
+echo "Updating SNAPSHOT dependencies to latest release"
+mvn -B -ntp versions:use-releases -DprocessAllModules=true -DallowSnapshots=false -f "${WORKSPACE}/pom.xml" || true
+
+echo "Committing dependency updates"
+mvn -B -ntp versions:commit -f "${WORKSPACE}/pom.xml"
+
+# Export for next step
+echo "${NEW_VER}" > new_version.txt
+                            '''
+                    }
+
+                    withCredentials([usernamePassword(credentialsId: "${env.GIT_CRED}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
+                        echo "PUSH_CHANGES=${env.PUSH_CHANGES}"
+                        
+                        sh '''#!/bin/bash
+set -euo pipefail
+
+git config user.name "Jenkins"
+git config user.email "jenkins@example.com"
+
+if [ -f new_version.txt ]; then
+    NEW_VERSION=$(cat new_version.txt)
+else
+    echo "ERROR: new_version.txt not found. Version calculation failed."
+    exit 1
+fi
+
+NEW_RELEASE_BRANCH="release-${NEW_VERSION}"
+
+# 2. Commit the changes (happens on detached HEAD)
+git add -A
+if git diff --staged --quiet; then
+    echo "No pom changes to commit"
+else
+    # Use the cleaned version for the commit message
+    git commit -m "[maven-release] Set release version to ${NEW_VERSION}" || true
+    
+    # 3. Create a new local branch pointing to the new commit (HEAD)
+    echo "Creating new local branch: ${NEW_RELEASE_BRANCH} pointing to HEAD"
+    git branch "${NEW_RELEASE_BRANCH}" HEAD
+
+    # 4. Define the timestamped tag
+    TIMESTAMP=$(date +%Y%m%d%H%M%S)
+    RELEASE_TAG="${NEW_VERSION}-${TIMESTAMP}"
+    echo "Creating tag: ${RELEASE_TAG}"
+    git tag -a "${RELEASE_TAG}" -m "Release tag ${RELEASE_TAG}" HEAD
+fi
+
+if [ "${PUSH_CHANGES}" = "true" ]; then
+    ORIGIN_URL=$(git remote get-url origin || echo "")
+    if [ -z "$ORIGIN_URL" ]; then
+        echo "ERROR: no origin remote defined; cannot push" >&2
+        exit 1
+    fi
+
+    # Inject credentials into the URL for push
+    AUTH_URL_WITH_USER=$(echo "$ORIGIN_URL" | sed -E "s#https://(.*)#https://${GIT_USER}@\\1#")
+    git remote set-url origin "$AUTH_URL_WITH_USER"
+
+    GIT_ASKPASS_SCRIPT=/tmp/git-askpass-$$.sh
+    cat > "$GIT_ASKPASS_SCRIPT" <<EOF
+#!/bin/bash
+echo "\${GIT_PAT}"
+EOF
+    chmod +x "$GIT_ASKPASS_SCRIPT"
+    export GIT_ASKPASS="$GIT_ASKPASS_SCRIPT"
+
+    echo "PUSH_CHANGES=${PUSH_CHANGES}. Pushing new branch ${NEW_RELEASE_BRANCH} and tag ${RELEASE_TAG} to origin..."
+    git push origin "${NEW_RELEASE_BRANCH}"
+    git push origin "${RELEASE_TAG}"
+
+    unset GIT_ASKPASS
+    rm -f "$GIT_ASKPASS_SCRIPT"
+    git remote set-url origin "$ORIGIN_URL"
+fi
+                            '''
+                    }
+                }
+            }
+        }
+
+        stage('Final Status') {
+            steps {
+                script {
+                    echo "Pipeline finished."
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+            echo 'Cleanup or additional post steps can be run here.'
+            }
+        }
+    }
+}
