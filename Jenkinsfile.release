@@ -283,7 +283,7 @@ fi
                     echo 'Building and running tests for all modules using Java 25...'
                     
                     // Tool environment is now automatically set by the top-level 'tools' block
-                    withMaven() {
+                    withMaven(mavenSettingsConfig: 'ef2a5c3a-2a74-46b7-8b61-fc5359f0452c') {
                         sh 'mvn -B -ntp clean deploy'
                     }
                 }
