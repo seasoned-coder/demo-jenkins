@@ -108,21 +108,6 @@ pipeline {
             }
         }
 
-        stage('Build & Test') {
-            when { expression { return false } }
-            agent any
-            steps {
-                script {
-                    echo 'Building and running tests for all modules using Java 25...'
-                    
-                    // Tool environment is now automatically set by the top-level 'tools' block
-                    withMaven() {
-                        sh 'mvn -B -ntp test'
-                    }
-                }
-            }
-        }
-
         // Simplified: Just checking tools work here. Calculation moved to Update POM for atomic execution.
         stage('Compute Next Version') {
             agent any
@@ -281,6 +266,21 @@ EOF
     git remote set-url origin "$ORIGIN_URL"
 fi
                             '''
+                    }
+                }
+            }
+        }
+
+        stage('Build, Test and Deploy The Release Version if POM is updated and git is pushed too') {
+            when { expression { env.SKIP_POM_UPDATE == 'false' && env.PUSH_CHANGES == 'false'} }
+            agent any
+            steps {
+                script {
+                    echo 'Building and running tests for all modules using Java 25...'
+                    
+                    // Tool environment is now automatically set by the top-level 'tools' block
+                    withMaven() {
+                        sh 'mvn -B -ntp clean deploy'
                     }
                 }
             }
