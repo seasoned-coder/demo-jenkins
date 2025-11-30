@@ -3,11 +3,19 @@ pipeline {
     agent any
     environment {
         MAVEN_TOOL = 'Maven3.9.11'
+        // This credential ID is used for both the checkout AND the git push
         GIT_CRED = 'GIT_RW'
     }
 
+    // Define parameters so this single pipeline can service multiple repositories
+    parameters {
+        string(name: 'TARGET_REPO_URL', description: 'The Git URL of the Java project to release (e.g. https://github.com/user/my-app.git)', trim: true)
+        string(name: 'TARGET_BRANCH', defaultValue: 'main', description: 'The branch of the Java project to checkout and release', trim: true)
+    }
+
     options {
-        // Stops Jenkins from automatically cloning/checking out the repository at the start of every stage
+        // Stops Jenkins from automatically cloning the Pipeline repo into the workspace.
+        // We only want the Target Java Project in the workspace.
         skipDefaultCheckout()
         ansiColor('xterm')
         timeout(time: 1, unit: 'HOURS')
@@ -22,10 +30,15 @@ pipeline {
             options { timeout(time: 1, unit: 'HOURS') }
             steps {
                 script {
+                    // Validation: Ensure parameters are provided
+                    if (!params.TARGET_REPO_URL) {
+                        error "TARGET_REPO_URL parameter is missing. Cannot proceed."
+                    }
+
                     def inputResult = input(
                     id: 'pomUpdate',
-                    message: 'Has the POM for this project been updated with the new release version?',
-                    ok: 'Submit',
+                    message: "Ready to release project: ${params.TARGET_REPO_URL} (Branch: ${params.TARGET_BRANCH})?",
+                    ok: 'Start Release',
                     parameters: [
                         booleanParam(name: 'SKIP_POM_UPDATE', defaultValue: true, description: 'Yes → skip POM update; No → update POM'),
                         choice(name: 'INC_TYPE', choices: ['MAJOR', 'MINOR', 'PATCH'].join('\n'), description: 'Select the version increment type to apply when updating the POM'),
@@ -34,7 +47,6 @@ pipeline {
                     )
 
                     env.SKIP_POM_UPDATE = inputResult.SKIP_POM_UPDATE.toString()
-                    // Trim and ensure the input is exactly MINOR/MAJOR/PATCH string
                     env.INC_TYPE = inputResult.INC_TYPE?.trim()
                     env.PUSH_CHANGES = inputResult.PUSH_CHANGES.toString()
                     
@@ -46,8 +58,19 @@ pipeline {
         stage('Checkout') {
             agent any
             steps {
-                echo "Ensuring workspace has a checked-out repository..."
-                checkout scm
+                echo "Checking out target repository: ${params.TARGET_REPO_URL} on branch ${params.TARGET_BRANCH}"
+                
+                // We explicitly checkout the TARGET project, not the pipeline repo.
+                // We use the GIT_CRED environment variable for authentication.
+                checkout([
+                    $class: 'GitSCM', 
+                    branches: [[name: "*/${params.TARGET_BRANCH}"]], 
+                    userRemoteConfigs: [[
+                        credentialsId: env.GIT_CRED, 
+                        url: params.TARGET_REPO_URL
+                    ]]
+                ])
+
                 script { sh 'pwd; ls -la' }
             }
         }
@@ -191,6 +214,7 @@ else
 fi
 
 if [ "${PUSH_CHANGES}" = "true" ]; then
+    # Use the Git remote URL that was set up during checkout
     ORIGIN_URL=$(git remote get-url origin || echo "")
     if [ -z "$ORIGIN_URL" ]; then
         echo "ERROR: no origin remote defined; cannot push" >&2
