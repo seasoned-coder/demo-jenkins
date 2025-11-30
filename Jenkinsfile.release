@@ -262,7 +262,7 @@ EOF
     export GIT_ASKPASS="$GIT_ASKPASS_SCRIPT"
 
     echo "PUSH_CHANGES=${PUSH_CHANGES}. Pushing new branch ${NEW_RELEASE_BRANCH} and tag ${RELEASE_TAG} to origin..."
-    git push --force "${NEW_RELEASE_BRANCH}"
+    git push --force origin "${NEW_RELEASE_BRANCH}"
     git push origin "${RELEASE_TAG}"
 
     unset GIT_ASKPASS
