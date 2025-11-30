@@ -83,12 +83,15 @@ pipeline {
                 script {
                     echo 'Building and running tests for all modules using Java 25...'
                     
-                    // FIXED: Removed manual `tool` and `withEnv` wrapper.
-                    // The `withMaven` step now accepts a `jdk` parameter to explicitly
-                    // configure the Java environment for the Maven execution, which is
-                    // the most reliable way to set JAVA_HOME within this context.
-                    withMaven(maven: env.MAVEN_TOOL, jdk: env.JAVA_TOOL) {
-                        sh 'mvn -B -ntp test'
+                    // NEW FIX: Explicitly resolve the tool path and set JAVA_HOME using withEnv.
+                    // This is done BEFORE withMaven, and withMaven is called without the 'jdk' parameter
+                    // so it inherits the explicit JAVA_HOME setting.
+                    def javaHomePath = tool name: env.JAVA_TOOL
+                    
+                    withEnv(["JAVA_HOME=${javaHomePath}"]) {
+                        withMaven(maven: env.MAVEN_TOOL) {
+                            sh 'mvn -B -ntp test'
+                        }
                     }
                 }
             }
@@ -100,9 +103,14 @@ pipeline {
             steps {
                 script {
                     echo 'Preparing to compute next version in Update stage...'
-                    // We need Java for this stage too, so we add it to the withMaven call here as well.
-                    withMaven(maven: env.MAVEN_TOOL, jdk: env.JAVA_TOOL) {
-                         sh "mvn -B -ntp -v"
+                    
+                    // Apply the same robust JDK path setting here
+                    def javaHomePath = tool name: env.JAVA_TOOL
+
+                    withEnv(["JAVA_HOME=${javaHomePath}"]) {
+                        withMaven(maven: env.MAVEN_TOOL) { // Removed jdk parameter
+                             sh "mvn -B -ntp -v"
+                        }
                     }
                 }
             }
@@ -119,11 +127,14 @@ pipeline {
                     }
 
                     echo "Updating POM based on increment type ${env.INC_TYPE}..."
+                    
+                    // Apply the same robust JDK path setting here
+                    def javaHomePath = tool name: env.JAVA_TOOL
 
-                    // Adding the JDK parameter here too for consistency
-                    withMaven(maven: env.MAVEN_TOOL, jdk: env.JAVA_TOOL, publisherStrategy: 'EXPLICIT') {
-                        // SIMPLE BASH SCRIPT: Get numbers, do math, set version. No Groovy interpolation.
-                        sh '''#!/bin/bash
+                    withEnv(["JAVA_HOME=${javaHomePath}"]) {
+                        withMaven(maven: env.MAVEN_TOOL, publisherStrategy: 'EXPLICIT') { // Removed jdk parameter
+                            // SIMPLE BASH SCRIPT: Get numbers, do math, set version. No Groovy interpolation.
+                            sh '''#!/bin/bash
 set -euo pipefail
 
 if [ ! -f pom.xml ]; then
@@ -183,7 +194,8 @@ mvn -B -ntp versions:commit -f "${WORKSPACE}/pom.xml"
 # Export for next step
 echo "${NEW_VER}" > new_version.txt
                             '''
-                    }
+                        }
+                    } // Close withEnv here
 
                     withCredentials([usernamePassword(credentialsId: "${env.GIT_CRED}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
                         echo "PUSH_CHANGES=${env.PUSH_CHANGES}"
