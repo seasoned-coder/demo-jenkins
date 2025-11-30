@@ -2,13 +2,13 @@
 pipeline {
     agent any
     environment {
-        MAVEN_TOOL = 'Maven3.9.11'
         // This credential ID is used for both the checkout AND the git push
         GIT_CRED = 'GIT_RW'
     }
 
     tools {
         jdk 'JDK25'
+        maven 'Maven3.9.11'
     }
 
     // Define parameters so this single pipeline can service multiple repositories
