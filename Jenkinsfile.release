@@ -272,7 +272,7 @@ fi
         }
 
         stage('Build, Test and Deploy The Release Version if POM is updated and git is pushed too') {
-            when { expression { env.SKIP_POM_UPDATE == 'false' && env.PUSH_CHANGES == 'false'} }
+            when { expression { env.SKIP_POM_UPDATE == 'false' && env.PUSH_CHANGES == 'true'} }
             agent any
             steps {
                 script {
