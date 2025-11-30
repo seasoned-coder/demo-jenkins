@@ -219,6 +219,7 @@ fi
 NEW_RELEASE_BRANCH="release-${NEW_VERSION}"
 
 # 2. Commit the changes (happens on detached HEAD)
+git fetch --tags
 git add -A
 if git diff --staged --quiet; then
     echo "No pom changes to commit"
