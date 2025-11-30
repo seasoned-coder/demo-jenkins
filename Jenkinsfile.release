@@ -83,12 +83,18 @@ pipeline {
                 script {
                     echo 'Building and running tests for all modules using Java 25...'
                     
-                    // FINAL FIX: Separate the tool step from the withMaven block to avoid the Groovy parser error.
-                    // This puts the JDK 25 executables onto the PATH for subsequent steps in this stage.
-                    tool name: env.JAVA_TOOL
+                    // 1. Resolve the path to the configured tool (JDK25).
+                    // This step sets the PATH but more importantly, returns the installation directory.
+                    def javaHomePath = tool name: env.JAVA_TOOL
                     
-                    withMaven(maven: env.MAVEN_TOOL) {
-                        sh 'mvn -B -ntp test'
+                    echo "Resolved JAVA_HOME path to: ${javaHomePath}"
+
+                    // 2. Explicitly set JAVA_HOME using withEnv to ensure the Maven Compiler Plugin
+                    // uses the correct JDK installation path, overriding any defaults or conflicts.
+                    withEnv(["JAVA_HOME=${javaHomePath}"]) {
+                        withMaven(maven: env.MAVEN_TOOL) {
+                            sh 'mvn -B -ntp test'
+                        }
                     }
                 }
             }
