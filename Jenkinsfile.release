@@ -83,18 +83,12 @@ pipeline {
                 script {
                     echo 'Building and running tests for all modules using Java 25...'
                     
-                    // 1. Resolve the path to the configured tool (JDK25).
-                    // This step sets the PATH but more importantly, returns the installation directory.
-                    def javaHomePath = tool name: env.JAVA_TOOL
-                    
-                    echo "Resolved JAVA_HOME path to: ${javaHomePath}"
-
-                    // 2. Explicitly set JAVA_HOME using withEnv to ensure the Maven Compiler Plugin
-                    // uses the correct JDK installation path, overriding any defaults or conflicts.
-                    withEnv(["JAVA_HOME=${javaHomePath}"]) {
-                        withMaven(maven: env.MAVEN_TOOL) {
-                            sh 'mvn -B -ntp test'
-                        }
+                    // FIXED: Removed manual `tool` and `withEnv` wrapper.
+                    // The `withMaven` step now accepts a `jdk` parameter to explicitly
+                    // configure the Java environment for the Maven execution, which is
+                    // the most reliable way to set JAVA_HOME within this context.
+                    withMaven(maven: env.MAVEN_TOOL, jdk: env.JAVA_TOOL) {
+                        sh 'mvn -B -ntp test'
                     }
                 }
             }
@@ -106,7 +100,8 @@ pipeline {
             steps {
                 script {
                     echo 'Preparing to compute next version in Update stage...'
-                    withMaven(maven: env.MAVEN_TOOL) {
+                    // We need Java for this stage too, so we add it to the withMaven call here as well.
+                    withMaven(maven: env.MAVEN_TOOL, jdk: env.JAVA_TOOL) {
                          sh "mvn -B -ntp -v"
                     }
                 }
@@ -125,7 +120,8 @@ pipeline {
 
                     echo "Updating POM based on increment type ${env.INC_TYPE}..."
 
-                    withMaven(maven: env.MAVEN_TOOL, publisherStrategy: 'EXPLICIT') {
+                    // Adding the JDK parameter here too for consistency
+                    withMaven(maven: env.MAVEN_TOOL, jdk: env.JAVA_TOOL, publisherStrategy: 'EXPLICIT') {
                         // SIMPLE BASH SCRIPT: Get numbers, do math, set version. No Groovy interpolation.
                         sh '''#!/bin/bash
 set -euo pipefail
