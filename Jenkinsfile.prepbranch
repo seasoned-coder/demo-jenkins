@@ -59,9 +59,8 @@ echo "Creating branch ${targetBranch} from tag ${sourceTag}"
 
 if [ ! -d \"${WORKSPACE}/.git\" ]; then
     echo "Repository not present, cloning into workspace"
-    ORIG_URL='${params.TARGET_REPO_URL}'
     # ensure we use https URL for credentials
-    git clone "$ORIG_URL" .
+    git clone "'${params.TARGET_REPO_URL}'" .
 else
     git fetch --tags --prune
 fi
