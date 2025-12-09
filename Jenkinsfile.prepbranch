@@ -1,0 +1,108 @@
+/* groovylint-disable DuplicateMapLiteral, LineLength */
+pipeline {
+    agent any
+    environment {
+        GIT_CRED = 'GIT_RW'
+    }
+
+    // NEW: Use the 'tools' directive for clean tool setup (sets JAVA_HOME and M2_HOME)
+    tools {
+        jdk 'JDK25'
+        maven 'Maven3.9.11'
+    }
+
+    // Define parameters so this single pipeline can service multiple repositories
+    parameters {
+        string(name: 'TARGET_REPO_URL', description: 'The Git URL of the Java project to release (e.g. https://github.com/user/my-app.git)', trim: true)
+        string(name: 'TARGET_BRANCH_TO_CREATE', defaultValue: 'main', description: 'The branch of the Java project to checkout and release', trim: true)
+        string(name: 'SOURCE_TAG', defaultValue: '', description: 'The git tag name to create a new branch from (leave empty to skip)')
+    }
+
+    options {
+        // Stops Jenkins from automatically cloning the Pipeline repo into the workspace.
+        // We only want the Target Java Project in the workspace.
+        skipDefaultCheckout()
+        ansiColor('xterm')
+        timeout(time: 1, unit: 'HOURS')
+        disableConcurrentBuilds()
+        timestamps()
+        buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '10'))
+    }
+
+    stages {
+                        
+        stage('Create New Branch From Tag') {
+            agent any
+            when { expression { params.SOURCE_TAG?.trim() != '' } }
+            steps {
+                script {
+                    // Validate inputs
+                    if (!params.TARGET_REPO_URL) {
+                        error "TARGET_REPO_URL parameter is missing"
+                    }
+                    if (!params.SOURCE_TAG) {
+                        error "SOURCE_TAG parameter is required for this stage"
+                    }
+
+                    def sourceTag = params.SOURCE_TAG.trim()
+                    def targetBranch = params.TARGET_BRANCH_TO_CREATE?.trim() ?: 'main'
+
+                    // NOTE: We rely on Jenkins to provide Git credentials and committer information
+                    // - Configure credentials in Manage Jenkins -> Credentials
+                    // - Configure default Git committer (user.name / user.email) via agent image or Jenkins global settings
+                    withCredentials([gitUsernamePassword(credentialsId: "${env.GIT_CRED}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
+                        sh """#!/bin/bash
+set -euo pipefail
+
+echo "Using repo: ${params.TARGET_REPO_URL}"
+echo "Creating branch ${targetBranch} from tag ${sourceTag}"
+
+if [ ! -d \"${WORKSPACE}/.git\" ]; then
+    echo "Repository not present, cloning into workspace"
+    ORIG_URL='${params.TARGET_REPO_URL}'
+    # ensure we use https URL for credentials
+    git clone "$ORIG_URL" .
+else
+    git fetch --tags --prune
+fi
+
+# Ensure the tag exists
+if ! git rev-parse --verify "refs/tags/${sourceTag}" >/dev/null 2>&1; then
+    echo "Tag ${sourceTag} not found; fetching tags from origin"
+    git fetch --tags --prune
+    if ! git rev-parse --verify "refs/tags/${sourceTag}" >/dev/null 2>&1; then
+        echo "ERROR: tag ${sourceTag} not found in repository" >&2
+        exit 1
+    fi
+fi
+
+echo "Creating/updating local branch ${targetBranch} from ${sourceTag}"
+git branch -f "${targetBranch}" "refs/tags/${sourceTag}"
+git checkout "${targetBranch}"
+
+# Push the new branch using the gitUsernamePassword credential binding (the plugin config/credential helper handles auth)
+echo "Pushing branch ${targetBranch} to origin"
+git push --force origin "${targetBranch}"
+"""
+                    }
+                }
+            }
+        }
+
+        stage('Final Status') {
+            steps {
+                script {
+                    echo "Pipeline finished."
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+            echo 'Cleanup or additional post steps can be run here.'
+            }
+        }
+    }
+}

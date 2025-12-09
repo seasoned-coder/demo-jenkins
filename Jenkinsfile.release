@@ -1,10 +1,9 @@
+// This Jenkinsfile is designed to automate the release process of a Java project managed with Maven.
+
 /* groovylint-disable DuplicateMapLiteral, LineLength */
 pipeline {
     agent any
     environment {
-        // Only necessary environment variables remain.
-        // MAVEN_TOOL and JAVA_TOOL are removed as they are now handled by the 'tools' block.
-        // This credential ID is used for both the checkout AND the git push
         GIT_CRED = 'GIT_RW'
     }
 
@@ -17,9 +16,8 @@ pipeline {
     // Define parameters so this single pipeline can service multiple repositories
     parameters {
         string(name: 'TARGET_REPO_URL', description: 'The Git URL of the Java project to release (e.g. https://github.com/user/my-app.git)', trim: true)
-        string(name: 'TARGET_BRANCH', defaultValue: 'main', description: 'The branch of the Java project to checkout and release', trim: true)
-        // NEW: Parameter to specify a Git Tag, which takes precedence over the branch
-        string(name: 'TARGET_TAG', defaultValue: '', description: 'Optional Git tag/SHA to checkout (takes precedence over TARGET_BRANCH)', trim: true)
+        string(name: 'TARGET_BRANCH', defaultValue: 'main', description: 'PRIMARY: The branch of the Java project to checkout and release', trim: true)
+        string(name: 'TARGET_TAG', defaultValue: '', description: 'OPTIONAL: Do not use unless you really mean it! Git tag/SHA to checkout (this takes precedence over TARGET_BRANCH)', trim: true)
     }
 
     options {
@@ -200,14 +198,14 @@ echo "${NEW_VER}" > new_version.txt
                             '''
                     }
 
-                    withCredentials([usernamePassword(credentialsId: "${env.GIT_CRED}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
+                    // NOTE: We rely on Jenkins to provide Git credentials and committer information
+                    // - Configure credentials in Manage Jenkins -> Credentials
+                    // - Configure default Git committer (user.name / user.email) via agent image or Jenkins global settings
+                    withCredentials([gitUsernamePassword(credentialsId: "${env.GIT_CRED}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PAT')]) {
                         echo "PUSH_CHANGES=${env.PUSH_CHANGES}"
                         
                         sh '''#!/bin/bash
 set -euo pipefail
-
-git config user.name "Jenkins"
-git config user.email "jenkins@example.com"
 
 if [ -f new_version.txt ]; then
     NEW_VERSION=$(cat new_version.txt)
@@ -242,32 +240,9 @@ else
 fi
 
 if [ "${PUSH_CHANGES}" = "true" ]; then
-    # Use the Git remote URL that was set up during checkout
-    ORIGIN_URL=$(git remote get-url origin || echo "")
-    if [ -z "$ORIGIN_URL" ]; then
-        echo "ERROR: no origin remote defined; cannot push" >&2
-        exit 1
-    fi
-
-    # Inject credentials into the URL for push
-    AUTH_URL_WITH_USER=$(echo "$ORIGIN_URL" | sed -E "s#https://(.*)#https://${GIT_USER}@\\1#")
-    git remote set-url origin "$AUTH_URL_WITH_USER"
-
-    GIT_ASKPASS_SCRIPT=/tmp/git-askpass-$$.sh
-    cat > "$GIT_ASKPASS_SCRIPT" <<EOF
-#!/bin/bash
-echo "\${GIT_PAT}"
-EOF
-    chmod +x "$GIT_ASKPASS_SCRIPT"
-    export GIT_ASKPASS="$GIT_ASKPASS_SCRIPT"
-
     echo "PUSH_CHANGES=${PUSH_CHANGES}. Pushing new branch ${NEW_RELEASE_BRANCH} and tag ${RELEASE_TAG} to origin..."
     git push --force origin "${NEW_RELEASE_BRANCH}"
     git push origin "${RELEASE_TAG}"
-
-    unset GIT_ASKPASS
-    rm -f "$GIT_ASKPASS_SCRIPT"
-    git remote set-url origin "$ORIGIN_URL"
 fi
                             '''
                     }
