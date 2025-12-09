@@ -14,7 +14,7 @@ pipeline {
     // Define parameters so this single pipeline can service multiple repositories
     parameters {
         string(name: 'TARGET_REPO_URL', description: 'The Git URL of the Java project to release (e.g. https://github.com/user/my-app.git)', trim: true)
-        string(name: 'TARGET_BRANCH_TO_CREATE', defaultValue: 'main', description: 'The branch of the Java project to checkout and release', trim: true)
+        string(name: 'TARGET_BRANCH_TO_CREATE', defaultValue: 'main', description: 'The name of the NEW branch of the Java project to checkout and release', trim: true)
         string(name: 'SOURCE_TAG', defaultValue: '', description: 'The git tag name to create a new branch from (leave empty to skip)')
     }
 
